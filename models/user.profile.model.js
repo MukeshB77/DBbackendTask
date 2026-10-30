@@ -8,7 +8,7 @@ const userProfileSchema = new mongoose.Schema(
             required: true,
             unique: true
         },
-        age: { type:Number, trim: true},
+        age: { type:Number, min: 0},
         dob: { type:String, trim: true},
         bio: { type:String, trim: true}
 

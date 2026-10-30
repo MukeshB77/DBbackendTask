@@ -1,5 +1,10 @@
 const mongoose = require("mongoose");
 
+const USER_ROLES = Object.freeze({
+    STUDENT: "student",
+    FACULTY: "faculty",
+});
+
 const userSchema = new mongoose.Schema(
     {
  name:{
@@ -13,6 +18,12 @@ const userSchema = new mongoose.Schema(
     unique:true,
     trim:true,
     lowercase:true
+ },
+ role:{
+    type:String,
+    enum:Object.values(USER_ROLES),
+    default:USER_ROLES.STUDENT,
+    required:true
  },
  password:{
     type:String,
@@ -33,5 +44,7 @@ profile:{
 );
 
 const User = mongoose.model("User",userSchema);
+
+User.ROLES = USER_ROLES;
 
 module.exports = User;
