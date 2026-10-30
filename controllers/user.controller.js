@@ -5,17 +5,42 @@ class UserController{
     async signup(req,res){
         try {
             
-            const {name,email,password} = req.body;
+            const {name,email,password,role} = req.body;
          if(!name || !email || !password){
             return res.status(400).json({message:"All fields are required!"})
         }
-        const result = await  userServices.signup(name,email,password);
+        const result = await  userServices.signup(name,email,password,role);
         return res.status(201).json({message:"user created successfully",data:result})
 
         } catch (error) {
             console.log(error.message);
-            return res.status(500).json({message:error.message})
+            const status = error.statusCode || (error.code === 11000 ? 409 : error.name === "ValidationError" ? 400 : 500);
+            return res.status(status).json({message:error.message})
             
+        }
+    }
+
+    async getallfaculty(req,res){
+        try {
+        const result = await userServices.getallfaculty();
+        return res.status(200).json({
+            count: result.length,
+            message:"faculty fetched successfully",data:result})
+        } catch (error) {
+            console.log(error.message);
+            return res.status(500).json({message:error.message})
+        }
+    }
+
+    async getallstudent(req,res){
+        try {
+        const result = await userServices.getallstudent();
+        return res.status(200).json({
+            count: result.length,
+            message:"students fetched successfully",data:result})
+        } catch (error) {
+            console.log(error.message);
+            return res.status(500).json({message:error.message})
         }
     }
 
@@ -71,7 +96,7 @@ class UserController{
         try {    
             const {id}=req.params;
             const updateData = req.body;
-            const result = await userServices.updateUserById(id,updateData);
+            const result = await userServices.updateUserById(id,updateData,req.user);
         
         return res.status(200).json({
             // count: result.lengt,
@@ -80,14 +105,15 @@ class UserController{
 
         } catch (error) {
             console.log(error.message);
-            return res.status(500).json({message:error.message})
+            const status = error.statusCode || (error.code === 11000 ? 409 : error.name === "ValidationError" ? 400 : 500);
+            return res.status(status).json({message:error.message})
         }
     }
 
     async softDelete(req,res){
         try {    
             const {id}=req.params;
-            const result = await userServices.softDelete(id); 
+            const result = await userServices.softDelete(id,req.user);
         return res.status(200).json({
             // count: result.lengt,
             success: true,
@@ -95,7 +121,7 @@ class UserController{
 
         } catch (error) {
             console.log(error.message);
-            return res.status(500).json({message:error.message})
+            return res.status(error.statusCode || 500).json({message:error.message})
         }
     }
 
@@ -109,11 +135,11 @@ class UserController{
 
 
         const loginData = await  userServices.loginUser(email,password);
-        return res.status(201).json({message:"user logined successfully",data:loginData})
+        return res.status(200).json({message:"user logged in successfully",data:loginData})
 
         } catch (error) {
             console.log(error.message);
-            return res.status(401).json({message:error.message})
+            return res.status(error.statusCode || 500).json({message:error.message})
             
         }
     }
@@ -140,7 +166,8 @@ class UserController{
            
 
             console.log(error.message);
-            return res.status(400).json({message:error.message})
+            const status = error.statusCode || (error.code === 11000 ? 409 : error.name === "ValidationError" ? 400 : 500);
+            return res.status(status).json({message:error.message})
             
         }
     }

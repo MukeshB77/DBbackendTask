@@ -6,36 +6,64 @@ const { default: mongoose } = require("mongoose");
 
 
 class UserService {
-  async signup(name, email, password) {
-    const hashpass = await bcrypt.hash(String(password), 10);
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      throw new Error("User already exist");
+  async signup(name, email, password, role) {
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      typeof email !== "string" ||
+      !email.trim() ||
+      typeof password !== "string" ||
+      !password
+    ) {
+      const error = new Error("Name, email, and password are required");
+      error.statusCode = 400;
+      throw error;
     }
 
-    const user = await User.create({ name, email, password: hashpass });
-    return user;
+    // if(role !== undefined && role !== User.ROLES.STUDENT){
+    //   const error = new Error("Public signup is only available for students");
+    //   error.statusCode = 403;
+    //   throw error;
+    // }
+    const hashpass = await bcrypt.hash(String(password), 10);
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      const error = new Error("User already exists");
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const user = await User.create({
+      name,
+      email: normalizedEmail,
+      password: hashpass,
+      role: role,
+      // role: User.ROLES.STUDENT,
+    });
+    const userWithoutPassword = user.toObject();
+    delete userWithoutPassword.password;
+    return userWithoutPassword;
+    // return user
+  }
+
+  async getallfaculty() {
+    return User.find({ role: User.ROLES.FACULTY, isActive: true }).populate("profile");
+  }
+
+  async getallstudent() {
+    return User.find({ role: User.ROLES.STUDENT, isActive: true }).populate("profile");
   }
 
   async getalluser() {
-    const users = await User.find({ isActive: true})
-    .populate("profile");
-    const userIds = users.map((user)=> user._id);
-    console.log(userIds,'///')
-    const userProfiles = await UserProfile.find({ user: { $in : userIds}})
-    console.log(userProfiles,"Userprofile data list")
-
-
-    return users;
+    return User.find({ isActive: true }).populate("profile");
   }
 
  async getalluserWithoutPop() {
     const users = await User.find({ isActive: true});
     const userIds = users.map((user)=> user._id);
-    console.log(userIds,'///')
     const userProfiles = await UserProfile.find({ user: { $in : userIds}})
-    console.log(userProfiles,"Userprofile data list")
 
     const usersWithProfiles = users.map((user)=>{
         const profile = userProfiles.find(
@@ -51,7 +79,7 @@ class UserService {
   }
 
   async getUserByQuery(name, email) {
-    const filter = {};
+    const filter = { isActive: true };
     if (name) {
       filter.name = name;
     }
@@ -62,19 +90,87 @@ class UserService {
     return users;
   }
 
-  async updateUserById(id, updateData) {
-    const data = { ...updateData };
-    const user = await User.findByIdAndUpdate(id, data, {
-      new: true,
-      runValidators: true,
-    });
-    if (!user) {
-      throw new Error("user not found");
+  async updateUserById(id, updateData, actor) {
+    if(!mongoose.isValidObjectId(id)){
+      const error = new Error("Invalid user ID");
+      error.statusCode = 400;
+      throw error;
     }
-    return user;
+
+    const target = await User.findById(id);
+    if(!target || !target.isActive){
+      const error = new Error("User not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const isSelf = target._id.toString() === actor.id;
+    const canUpdate =
+      actor.role === User.ROLES.STUDENT && isSelf ||
+      actor.role === User.ROLES.FACULTY &&
+        (isSelf || target.role === User.ROLES.STUDENT);
+    if(!canUpdate){
+      const error = new Error("You are not authorized to update this user");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const userFields = ["name", "email"];
+    const profileFields = ["age", "dob", "bio"];
+    const userData = {};
+    const profileData = {};
+    for(const field of userFields){
+      if(Object.prototype.hasOwnProperty.call(updateData, field)){
+        userData[field] = updateData[field];
+      }
+    }
+    for(const field of profileFields){
+      if(Object.prototype.hasOwnProperty.call(updateData, field)){
+        profileData[field] = updateData[field];
+      }
+    }
+
+    if(Object.keys(userData).length === 0 && Object.keys(profileData).length === 0){
+      const error = new Error("At least one valid profile field is required");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if(userData.email){
+      userData.email = userData.email.trim().toLowerCase();
+    }
+    if(Object.keys(userData).length){
+      await User.findByIdAndUpdate(id, userData, { runValidators: true });
+    }
+    if(Object.keys(profileData).length){
+      const profile = await UserProfile.findOneAndUpdate(
+        { user: id },
+        { $set: profileData },
+        { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+      );
+      await User.findByIdAndUpdate(id, { profile: profile._id });
+    }
+
+    return User.findById(id).populate("profile");
   }
 
-  async softDelete(id) {
+  async softDelete(id, actor) {
+    if(!mongoose.isValidObjectId(id)){
+      const error = new Error("Invalid user ID");
+      error.statusCode = 400;
+      throw error;
+    }
+    const target = await User.findById(id);
+    if(!target){
+      const error = new Error("User not found");
+      error.statusCode = 404;
+      throw error;
+    }
+    if(actor.role !== User.ROLES.FACULTY || target.role !== User.ROLES.STUDENT){
+      const error = new Error("Only faculty can deactivate student accounts");
+      error.statusCode = 403;
+      throw error;
+    }
     const user = await User.findByIdAndUpdate(
       id,
       { isActive: false },
@@ -90,21 +186,29 @@ class UserService {
   }
 
   async loginUser(email, password) {
-    const user = await User.findOne({ email }).select("+password");
-    if (!user) {
-      throw new Error("User not found");
+    if (typeof email !== "string" || !email.trim() || typeof password !== "string" || !password) {
+      const error = new Error("Email and password are required");
+      error.statusCode = 400;
+      throw error;
     }
-     if (!user.isActive) {
-      throw new Error("User is InActive");
+
+    const user = await User.findOne({ email: email.trim().toLowerCase() }).select("+password");
+    if (!user || !user.isActive) {
+      const error = new Error("Invalid credentials");
+      error.statusCode = 401;
+      throw error;
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      throw new Error("Invalid credentials");
+      const error = new Error("Invalid credentials");
+      error.statusCode = 401;
+      throw error;
     }
     const payload = {
-      id: user._id,
+      id: user._id.toString(),
       email: user.email,
       isActive: user.isActive,
+      role: user.role,
     };
     const token = jwtTokenService.generateToken(payload);
     const userWithoutPassword = user.toObject();
@@ -114,12 +218,16 @@ class UserService {
 
 async addUserProfile(userId, profileData){
     if(!mongoose.isValidObjectId(userId)){
-        throw new Error("Invalid user ID");
+        const error = new Error("Invalid user ID");
+        error.statusCode = 400;
+        throw error;
 
     }
-    const user = await User.findById(userId);
+    const user = await User.findOne({ _id: userId, isActive: true });
     if(!user){
-        throw new Error("User not Found");
+        const error = new Error("User not found");
+        error.statusCode = 404;
+        throw error;
     }
 
    const newProfile = await UserProfile.create({
@@ -130,7 +238,7 @@ async addUserProfile(userId, profileData){
    });
    user.profile = newProfile._id;
    await user.save();
-   return userProfile;
+   return newProfile;
 }
 
 
